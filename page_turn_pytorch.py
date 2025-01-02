@@ -91,6 +91,7 @@ class PageTurnEffect:
         curl_positions = torch.nonzero(mask_curl)[valid_coords]
         
         # 获取前后页面颜色
+        # 修改获取前后页面颜色的部分
         front_color = img_tensor[p1_valid[:, 1], p1_valid[:, 0]]
         back_color = img_tensor[p2_valid[:, 1], p2_valid[:, 0]]
         
@@ -98,14 +99,40 @@ class PageTurnEffect:
         light = ((self.FOLD_RADIUS - dist[mask_curl][valid_coords]) / self.FOLD_RADIUS) * 0.3
         light = light.float()
         
-        back_color = torch.minimum(back_color + light.unsqueeze(-1), 
-                                 torch.tensor(0.8, device=self.device, dtype=torch.float32))
-        
-        # 混合颜色
-        mixed_color = torch.clamp(
-            front_color * (1 - self.OPACITY) + back_color * self.OPACITY,
-            0, 1
-        ).float()
+        # 修改：分别处理RGB和Alpha通道
+        if img_tensor.shape[-1] == 4:  # 检查是否有Alpha通道
+            # RGB通道添加光照效果
+            back_color_rgb = torch.minimum(back_color[..., :3] + light.unsqueeze(-1), 
+                                        torch.tensor(0.8, device=self.device, dtype=torch.float32))
+            # 保持Alpha通道不变
+            back_color = torch.cat([back_color_rgb, back_color[..., 3:]], dim=-1)
+            
+            # 混合颜色时考虑Alpha通道
+            alpha_front = front_color[..., 3:4]
+            alpha_back = back_color[..., 3:4]
+            
+            # 计算混合后的Alpha
+            mixed_alpha = torch.clamp(
+                alpha_front * (1 - self.OPACITY) + alpha_back * self.OPACITY,
+                0, 1
+            )
+            
+            # 计算混合后的RGB
+            mixed_rgb = torch.clamp(
+                front_color[..., :3] * (1 - self.OPACITY) + back_color[..., :3] * self.OPACITY,
+                0, 1
+            )
+            
+            # 合并RGB和Alpha通道
+            mixed_color = torch.cat([mixed_rgb, mixed_alpha], dim=-1)
+        else:
+            # 原来的处理方式（无Alpha通道）
+            back_color = torch.minimum(back_color + light.unsqueeze(-1), 
+                                     torch.tensor(0.8, device=self.device, dtype=torch.float32))
+            mixed_color = torch.clamp(
+                front_color * (1 - self.OPACITY) + back_color * self.OPACITY,
+                0, 1
+            )
         
         output[curl_positions[:, 0], curl_positions[:, 1]] = mixed_color.to(output.dtype)
 
@@ -180,7 +207,7 @@ class PageTurn:
 
 def main():
     # 使用自定义图片
-    input_image = Image.open('input.jpg').convert('RGBA')
+    input_image = Image.open('input.png').convert('RGBA')
     
     # 选择计算设备
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -190,15 +217,14 @@ def main():
     page_turn = PageTurn(input_image, device=device)
     
     # 生成单帧
-    progress = 0.5  # 设置进度
+    progress = 0.55  # 设置进度
     result_image = page_turn.generate_frame(progress)
     
     # 保存结果
     result_image.save('output_frame.png')
     
     # 生成完整动画帧
-    frames = page_turn.generate_animation_frames(num_frames=30)
-    frames[0].save('animation.gif', save_all=True, append_images=frames[1:], duration=50, loop=0)
+
     return result_image
 
 
